@@ -1,0 +1,596 @@
+# calc40.ums
+# 4/27/23
+# Purpose: implementation for the RPN calculator operations
+
+# Function calling convention:
+        # * r0 is always 0
+        # * r1 contains the return address
+        # * r1 contains the return value
+        # * r2 is the call stack pointer
+        # * r3 is the value stack pointer
+        # * Arguments are place on the call stack and popped off by the
+        #   function. The callee sees the first argument at the lowest address,
+        #   with subsequent arguments at higher addresses
+        # * r4 is the nonvolatile general-purpose registers
+        # * r5, r6, and r7 are volatile registers
+        # * r6 and r7 are designated temporary registers
+
+
+# set r0 to zero and temp registers r6, r7
+.zero r0
+.temps r6, r7
+
+.section rodata
+        # set aside space for jumptable entries
+        jumptable:
+        .space 256
+
+.section data 
+        # set aside space for value stack
+        .space 100000
+        endValStack:
+
+.section init
+        # store jump table in r5
+        r5 := jumptable
+        r4 := jumptable + 256
+
+        # initialize each entry in jumptable with input_error labels
+        fillTable:
+                m[r0][r5] := inputError
+                # increments by offset r5 to get next entry in table
+                r5 := r5 + 1
+                if (r5 <s r4) goto fillTable using r3
+
+        # set all digit slots
+        r5 := jumptable + '0'
+        r4 := jumptable + '9' + 1
+        # replace the valid inputs with their function calls - similar
+                # loop as fillTable
+        fillDigitSlots:
+                m[r0][r5] := digitFromWaiting
+                r5 := r5 + 1
+                if (r5 <s r4) goto fillDigitSlots using r3
+        
+        # set register r5 to hold the jump table
+        r5 := jumptable
+
+        # set register r3 to hold the value stack
+        r3 := endValStack
+
+        # set the other valid input entries in jumptable (in r5)
+        m[r0][r5 + ' '] := waiting
+        m[r0][r5 + '\n'] := print
+        m[r0][r5 + '+'] := add
+        m[r0][r5 + '-'] := sub
+        m[r0][r5 + '*'] := mult
+        m[r0][r5 + '/'] := div
+        m[r0][r5 + '|'] := or
+        m[r0][r5 + '&'] := and
+        m[r0][r5 + 'c'] := changeSign
+        m[r0][r5 + '~'] := comp
+        m[r0][r5 + 's'] := swap
+        m[r0][r5 + 'd'] := dup
+        m[r0][r5 + 'p'] := popTop
+        m[r0][r5 + 'z'] := clearStack
+
+.section text
+
+        # main
+        #
+        # Purpose: run the command loop
+        # Parameters: none
+        # Returns: 0 (success)
+        main:
+                # save return address r1 on the call stack (r2)
+                push r1 on stack r2
+
+                # begin the command loop in the waiting state
+                goto waiting linking r1
+
+                # set the return value and go back to address that called main
+                pop r5 off stack r2
+                r1 := r0
+                goto r5
+
+        # waiting
+        #
+        # Purpose: waits for user input before taking and sending it 
+        #               through the jump table
+        # Parameters: none
+        # Returns: none
+        # Notes: the waiting state occurs after all valid and invalid
+        #        instructions, excluding eof and after digit inputs
+        waiting:
+                # get input and store in r4 - if input is eof then 
+                #       end program, otherwise send input to jump table
+                r4 := input()
+                # if input is EOF then end program
+                if (r4 == -1) goto endLoop using r5
+                goto jumpToTable
+        
+        # entering
+        #
+        # Purpose: take in user input and send it to the instruction (possibly
+        #          through the jump table) -- adds a digit to the value stack
+        # Parameters: none
+        # Returns: none
+        # Notes: the entering state only occurs after digit inputs. If a digit
+        #        is entered in this state, the machine jumps to a procedure
+        #        that is not in the jump table
+        entering:       
+                # get input with r4 - if input is eof then end program, 
+                # if input is a digit, go to special digit function, otherwise 
+                # send input to jump table
+                r4 := input()
+                if (r4 <s '0') goto jumpToTable using r5
+                if (r4 >s '9') goto jumpToTable using r5
+                goto digitFromEntering
+
+
+        # jumpToTable
+        #
+        # Purpose: is a helper to access entries the jump table (r5) 
+        #               based on the user's input
+        # Parameters: none
+        # Returns: Goes to specified command
+        # Notes: 
+        # 
+        jumpToTable:
+                r5 := jumptable + r4    # r4 holds input
+                r5 := m[r0][r5]
+                goto r5
+        
+        # end the command loop
+        endLoop:
+                pop r5 off stack r2
+                goto r5
+
+        # digitFromWaiting
+        #
+        # Purpose: deals with inputted digit in waiting state stored in r4. 
+        #               If the given number is not a single digit number, then 
+        #               this digit is the first digit in this number
+        # Parameters: none
+        # Returns: Goes to waiting state
+        # Notes: 
+        # 
+        digitFromWaiting:
+                # convert the inputted ascii representation of a digit to the
+                # number itself in binary
+                r4 := r4 - '0'          # r4 holds input
+
+                # put it on the value stack
+                push r4 on stack r3
+
+                # maintain r4 as the input
+                r4 := r4 + '0'
+
+                # change machine state to entering
+                goto entering
+
+        # digitFromEntering
+        #
+        # Purpose: get the top number from the value stack in r3 and gives 
+        #       it the new correct value (by multiplying the number stored
+        #       in r5 by 10 and adding the newly inputted number)
+        # Parameters: none
+        # Returns: Goes to entering state
+        # Notes: 
+        # 
+        digitFromEntering:
+                pop r5 off stack r3     # r5 holds the multidigit
+                r4 := r4 - '0'          # r4 holds input
+                r5 := r5 * 10
+                r5 := r5 + r4
+                push r5 on stack r3
+
+                # maintain r4 as the input
+                r4 := r4 + '0'
+
+                goto entering
+        
+        # print
+        #
+        # Purpose: executes the newline instruction, printing the value stack
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: 
+        # 
+        print:
+                # do nothing if there is nothing on the stack in r3
+                if (r3 == endValStack) goto waiting using r5
+                
+                # set r1 to return address
+                r1 := waiting
+
+                # popLine and pushLine work together recursivley to
+                # simultaneously print and maintain the value stack in r3
+                popLine:
+                        # print the top element of the stack, then move it from
+                        # the value stack to the call stack (r2)
+                        push r1 on stack r2
+                        goto printd linking r1
+                        
+                        pop r5 off stack r3
+                        push r5 on stack r2
+                        if (r3 == endValStack) goto pushLine using r5
+                        goto popLine linking r1
+
+                # move the element back from the call stack to the value stack
+                pushLine:
+                        pop r5 off stack r2
+                        push r5 on stack r3
+                        pop r5 off stack r2
+                        goto r5
+
+        # add
+        #
+        # Purpose: executes the add instruction by adding the values
+        #               in registers r5 and r4 (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        #         
+        add:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # add the top two numbers
+                pop r5 off stack r3     # r5 is y and r4 is x, 
+                pop r4 off stack r3     # r3 holds value stack
+                r4 := r4 + r5
+                push r4 on stack r3
+                goto waiting
+
+        # sub
+        #
+        # Purpose: executes the subtraction instruction by subtracting the 
+        #               values in registers r5 and r4 (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        sub:
+                # check to make sure enough values are given by storing 
+                # the expected number inputs in r5 and passing it as a
+                # paramter to the inputCheck function
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # subtract the top number from the next-to-top number
+                pop r5 off stack r3     # r5 is y and r4 is x,
+                pop r4 off stack r3     # r3 holds value stack
+                r4 := r4 - r5
+                push r4 on stack r3
+
+                goto waiting
+
+        # mult
+        #
+        # Purpose: executes the multiply instruction by multiplying 
+        #               the values in registers r5 and r4 (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        mult:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # multiply the top 2 numbers
+                pop r5 off stack r3     # r5 is y and r4 is x,
+                pop r4 off stack r3     # r3 holds value stack
+                r4 := r4 * r5
+                push r4 on stack r3
+                goto waiting
+        
+        # div
+        #
+        # Purpose: executes the division instruction by dividing
+        #                the values in registers r5 and r4 (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given. Also calls
+        #       the function divZero to handle division by 0 and
+        #       the functions negateR4 and negateR5 to handle
+        #       negative numbers.
+        # 
+        div:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                pop r4 off stack r3      # r3 holds value stack
+
+                # divide the second-to-top number by the top number
+                
+                # cannot divide by 0
+                if (r4 == 0) goto divZero
+                pop r5 off stack r3
+                
+                # r1 used to keep track of how many negative numbers there are
+                r1 := r0
+                push r1 on stack r3
+
+                # negate the number(s) that are negative so that division can be
+                # performed on 2 positive numbers (negative division does not
+                # work correctly)
+                # divCont1 and divCont2 are here because there are not enough
+                # registers to do linking
+                if (r4 <s r0) goto negateR4 using r1
+                divCont1:
+                if (r5 <s r0) goto negateR5 using r1
+                divCont2:
+
+                # perform division on 2 nonnegative numbers
+                r5 := r5 / r4           # r5 is y and r4 is x
+
+                # negate the number if one of the numbers was negative
+                pop r1 off stack r3
+                r1 := r1 mod 2
+                if (r1 == 1) goto negativeDiv using r4
+        
+        endDiv:
+                push r5 on stack r3
+                goto waiting
+
+        # if the quotient should be negative, negate the absolute value of it
+        negativeDiv:
+                r5 := r5 * -1
+                goto endDiv
+
+        # negate the r4 register
+        negateR4:
+                # document the fact that this number is negative
+                pop r1 off stack r3
+                r1 := r1 +1
+                push r1 on stack r3
+
+                # negate the number
+                r4 := r4 * -1
+                goto divCont1
+        
+        # negate the r5 register
+        negateR5:
+                # document the fact that this number is negative
+                pop r1 off stack r3
+                r1 := r1 + 1
+                push r1 on stack r3
+
+                # negate the number
+                r5 := r5 * -1
+                goto divCont2
+
+        # error for dividing by zero
+        divZero:
+                push r4 on stack r3
+                output "Division by zero\n"
+                goto waiting
+
+
+        # or
+        #
+        # Purpose: executes the bitwise or instruction by perform bitwise
+        #               or on the values in registers r5 and r4 
+        #               (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        or:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # perform bitwise or on the top 2 elements
+                pop r5 off stack r3     # r5 is y and r4 is x
+                pop r4 off stack r3     # r3 holds value stack
+                r4 := r4 | r5
+                push r4 on stack r3
+                goto waiting
+
+        # and
+        #
+        # Purpose: executes the bitwise or instruction by perform bitwise
+        #               and on the values in registers r5 and r4 
+        #               (given as input)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        and:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # perform bitwise or on the top 2 elements
+                pop r5 off stack r3     # r5 is y and r4 is x
+                pop r4 off stack r3     # r3 holds value stack
+                r4 := r4 & r5
+                push r4 on stack r3
+                goto waiting
+
+        # changeSign
+        #
+        # Purpose: executes change sign instruction by changing the sign
+        #               of the top element (value in r4)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        changeSign:
+                # check to make sure enough values are given
+                r5 := 1
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # change the sign of the top element
+                # r4 is the top element of the value stack (r3)
+                pop r4 off stack r3
+                r4 := r4 * -1
+                push r4 on stack r3
+                goto waiting
+
+        # comp
+        #
+        # Purpose: executes bitwise complement instruction
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        comp:
+                # check to make sure enough values are given
+                r5 := 1
+                push r5 on stack r2
+                goto inputCheck linking r1
+                
+                # get the complement of the top element
+                # r4 is the top element of the value stack (r3)
+                pop r4 off stack r3
+                r4 := r4 nand r4
+                push r4 on stack r3
+                goto waiting
+
+        # swap
+        #
+        # Purpose: executes swap instruction by swapping the top
+        #               two elements of the stack (r5 and r4)
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        swap:
+                # check to make sure enough values are given
+                r5 := 2
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # swap the top 2 elements
+                pop r5 off stack r3     
+                pop r4 off stack r3 
+                push r5 on stack r3
+                push r4 on stack r3
+                goto waiting
+
+        # dup
+        #
+        # Purpose: executes duplicate instruction
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        dup:
+                # check to make sure enough values are given
+                r5 := 1
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # duplicate the top element (r4)
+                pop r4 off stack r3
+                push r4 on stack r3
+                push r4 on stack r3
+                goto waiting
+
+        # popTop
+        #
+        # Purpose: executes pop top element instruction
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: calls the inputCheck function to verify that the 
+        #       correct number of arguments is given
+        # 
+        popTop:
+                # check to make sure enough values are given
+                r5 := 1
+                push r5 on stack r2
+                goto inputCheck linking r1
+
+                # remove the top element in stack in r3
+                pop stack r3
+                goto waiting
+
+        # clearStack
+        #
+        # Purpose: executes clear stack instruction
+        # Parameters: r3 holds value stack
+        # Returns: Goes to waiting
+        # Notes: none
+        # 
+        clearStack:
+                r3 := endValStack
+                goto waiting
+
+        # inputError
+        #
+        # Purpose: prints error message if given unknown input
+        #               character
+        # Parameters: none
+        # Returns: Goes to waiting
+        # Notes: none
+        # 
+        inputError:
+                output "Unknown character '"
+                output r4       # r4 holds input
+                output "'\n"
+                goto waiting
+
+        # inputCheck
+        #
+        # Purpose: checks if there are enough elements on the stack to perform
+        #          the desired operation
+        # Parameters: the number of necessary elements
+        # Returns: to invalidStack function to print error message if invalid
+        #               otherwise to given instruction
+        inputCheck:
+                # get the number of required elements on the stack
+                pop r4 off stack r2
+
+                # save the return address
+                push r1 on stack r2
+                
+                # if there are enough elements on the value stack, go back to
+                # where the program was to perform the desired operation
+                r5 := endValStack - r3
+                if (r4 <=s r5) goto validStack using r5
+                # otherwise print error message
+                goto invalidStack
+
+        validStack:
+                pop r5 off stack r2
+                goto r5
+        
+        # print error message and do not perform the desired operation
+        invalidStack:
+                output "Stack underflow---expected at least "
+                output r4 + '0'
+                output " element"
+                # print out the "s" is there is more than one necessary element
+                if (r4 >s 1) goto needsMultiple using r5
+
+        invalidStackEnding:
+                output "\n"
+                pop stack r2
+                goto waiting
+
+        needsMultiple:
+                output "s"
+                goto invalidStackEnding

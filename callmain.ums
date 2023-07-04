@@ -1,0 +1,24 @@
+# calc40.ums
+# 4/27/23
+# Purpose: call the main function for the RPN calculator
+
+# Function calling convention:
+        # * r0 is always 0
+        # * r1 contains the return address
+        # * r1 contains the return value
+        # * r6 and r7 are designated temporary (and thus volatile) registers
+
+# set zero and temp registers
+.zero r0
+.temps r6, r7
+
+.section init
+        # callMain
+        #
+        # Purpose: call the RPN calculator main command loop
+        # Parameters: none
+        # Returns: none
+        callMain:
+                # call main function
+                goto main linking r1
+                halt

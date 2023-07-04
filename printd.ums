@@ -1,0 +1,118 @@
+# printd.ums
+# 4/27/23
+# Purpose: implementation to print signed binary numbers in decimal format
+
+# Function calling convention:
+        # * r0 is always 0
+        # * r1 contains the return address
+        # * r1 contains the return value
+        # * r2 is the call stack pointer
+        # * r3 is the value stack pointer
+        # * Arguments are place on the call stack and popped off by the
+        #   function. The callee sees the first argument at the lowest address,
+        #   with subsequent arguments at higher addresses
+        # * r4 is the nonvolatile general-purpose registers
+        # * r5, r6, and r7 are volatile registers
+        # * r6 and r7 are designated temporary registers
+
+# set zero and temp registers
+.zero r0
+.temps r6, r7
+
+.section text
+        # printd
+        #
+        # Purpose: print the number at the top of the value stack in decimal
+        # Parameters: none
+        # Returns: none
+        printd:
+                # get value of number on top of value stack, also save return
+                # address
+                push r1 on stack r2 
+                pop r4 off stack r3
+                push r4 on stack r2
+
+                output ">>> "
+
+                # manually set r1 to where the calls should go to
+                r1 := endPrintd
+                # different number cases
+                r5 := 0x80000000
+                if (r4 == r5) goto printLargestNeg using r5
+                if (r4 == 0) goto print0 using r5
+                if (r4 >s 0) goto printPos using r5
+                if (r4 <s 0) goto printNeg using r5
+
+        # endPrintd
+        #
+        # Purpose: conclude the print process, performing necessary bookkeeping
+        # Parameters: none
+        # Returns: none   
+        endPrintd:
+                output "\n"
+
+                # place the number back at the top of the val stack and return
+                # to where the program was before
+                pop r4 off stack r2
+                push r4 on stack r3
+                pop r5 off stack r2
+                goto r5
+
+        # special case to print the most negative number
+        printLargestNeg:
+                output "-2147483648"
+                goto endPrintd
+
+        # special case to print 0
+        print0:
+                output "0"
+                goto endPrintd
+
+        # if the number is negative, print out the negative sign and treat it as
+        # a positive number
+        printNeg:
+                output '-'
+                r4 := r4 * -1
+                goto printPos
+        
+        # endPrintd
+        #
+        # Purpose: prints a positive binary number in decimal
+        # Parameters: none
+        # Returns: none
+        # Notes: this is a recursive function that prints out one digit at a
+        #        time, from the most significant to the least significant
+        printPos:
+                # save the return address and push the value of the current
+                # number iteration on the stack
+                push r1 on stack r2
+                push r4 on stack r2
+
+                # remove the least significant digit
+                r4 := r4 / 10
+
+                # if the number is 0 go to print stage, otherwise perform
+                # another iteration
+                if (r4 == 0) goto endPrintPos using r5
+                goto printPos linking r1
+
+                # get the value from the current iteration and output the least
+                # significant digit
+                pop r4 off stack r2
+                r4 := r4 mod 10
+                output r4 + '0'
+
+                # go to the saved return address
+                pop r5 off stack r2
+                goto r5
+
+        # base case for printPos - print the most significant digit
+        endPrintPos:
+                # get the value from the stack and print it (this is the least
+                # significant digit)
+                pop r4 off stack r2
+                output r4 + '0'
+
+                # go to the saved return address
+                pop r5 off stack r2
+                goto r5

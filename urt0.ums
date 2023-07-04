@@ -1,0 +1,29 @@
+# urt0.ums
+# 4/27/23
+# Purpose: runtime setup for the RPN calculator
+
+# Function calling convention:
+        # * r0 is always 0
+        # * r1 contains the return address
+        # * r1 contains the return value
+        # * r2 is the call stack pointer
+
+# set zero and temp registers
+.zero r0
+
+.section data
+        # set aside space for the call stack
+        .space 100000
+        endstack:
+        
+.section init
+        # start
+        #
+        # Purpose: set up registers and memory that must take place before
+        #          main is called
+        # Parameters: none
+        # Returns: none
+        start:
+                # set zero register and call stack registers
+                r0 := 0
+                r2 := endstack
